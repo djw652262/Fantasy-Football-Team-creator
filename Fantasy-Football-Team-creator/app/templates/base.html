@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{% block title %}Fantasy Football Team Creator{% endblock %}</title>
+  <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+  <div class="shell">
+    <header class="topbar">
+      <div>
+        <p class="eyebrow">Fantasy Premier League Assistant</p>
+        <h1>Fantasy Football Team Creator</h1>
+      </div>
+      <nav class="nav">
+        <a href="/recommendations">Recommendations</a>
+        <a href="/squad">Squad Editor</a>
+        <a href="/history">History</a>
+      </nav>
+    </header>
+
+    <section class="status-bar">
+      <div>
+        <strong>Cached FPL Data</strong>
+        {% if cache_status.available %}
+          <span>Ready. Last refresh: {{ cache_status.cached_at }}</span>
+        {% else %}
+          <span>No local cache yet. Refresh once to load player and fixture data.</span>
+        {% endif %}
+      </div>
+      <form method="post" action="/refresh-data">
+        <button type="submit" class="button button--ghost">Refresh FPL Data</button>
+      </form>
+    </section>
+
+    {% if flash_message %}
+      <div class="flash">{{ flash_message }}</div>
+    {% endif %}
+
+    {% if selection_error %}
+      <div class="flash flash--error">{{ selection_error }}</div>
+    {% endif %}
+
+    {% block content %}{% endblock %}
+  </div>
+</body>
+</html>

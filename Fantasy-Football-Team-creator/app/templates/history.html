@@ -1,0 +1,44 @@
+{% extends "base.html" %}
+
+{% block title %}History{% endblock %}
+
+{% block content %}
+<section class="panel">
+  <div class="section-heading">
+    <div>
+      <p class="eyebrow">Saved Decisions</p>
+      <h2>Lineup History</h2>
+    </div>
+    <p>Track the lineups you chose to save in this app and compare their points from one gameweek to the next. Scores appear once cached event data is available.</p>
+  </div>
+
+  {% if saved_lineups %}
+    <div class="history-list">
+      {% for lineup in saved_lineups %}
+        <article class="history-card">
+          <div class="history-card__header">
+            <div>
+              <h3>Gameweek {{ lineup.gameweek }}</h3>
+              <p>Saved {{ lineup.created_at }}</p>
+            </div>
+            <strong>
+              {% if lineup.total_points is not none %}
+                {{ lineup.total_points }} pts
+              {% else %}
+                score pending
+              {% endif %}
+            </strong>
+          </div>
+          <ul class="history-players">
+            {% for player in lineup.players %}
+              <li>{{ player.player_name }} · {{ player.role }}{% if player.bench_order %} {{ player.bench_order }}{% endif %}</li>
+            {% endfor %}
+          </ul>
+        </article>
+      {% endfor %}
+    </div>
+  {% else %}
+    <p>No saved lineups yet.</p>
+  {% endif %}
+</section>
+{% endblock %}
