@@ -1,0 +1,125 @@
+{% extends "base.html" %}
+
+{% block title %}Recommendations{% endblock %}
+
+{% block content %}
+<section class="hero">
+  <div>
+    <p class="eyebrow">Next Match Focus</p>
+    <h2>{% if data_ready %}Gameweek {{ current_gameweek }} lineup recommendations{% else %}Lineup recommendations{% endif %}</h2>
+  </div>
+  <p>Rank your own squad for the next match only, weigh fitness and opponent strength, then save the lineup you actually want to use as your decision record.</p>
+</section>
+
+{% if not data_ready %}
+  <section class="panel">
+    <h3>Refresh FPL data to begin</h3>
+    <p>The app now loads from local cached data for speed. Use the refresh button above once, then the recommendations page will open quickly from that saved data.</p>
+  </section>
+{% else %}
+
+{% if unresolved_names %}
+  <section class="panel">
+    <h3>Unmatched squad names</h3>
+    <p>The app could not match these entries to current FPL players: {{ unresolved_names|join(", ") }}.</p>
+  </section>
+{% endif %}
+
+<section class="grid-two">
+  <section class="panel">
+    <div class="section-heading">
+      <div>
+        <p class="eyebrow">Auto Pick</p>
+        <h3>Recommended XI</h3>
+      </div>
+      <p>Formation {{ recommended_formation }}</p>
+    </div>
+
+    <div class="chips">
+      {% for player in recommended_starters %}
+        <span class="chip">{{ player.player_name }} · {{ player.position }}</span>
+      {% endfor %}
+    </div>
+
+    <h4>Bench Order</h4>
+    <ol class="bench-list">
+      {% for player in recommended_bench %}
+        <li>{{ player.player_name }} ({{ player.position }})</li>
+      {% endfor %}
+      {% if reserve_goalkeeper %}
+        <li>Reserve GK: {{ reserve_goalkeeper.player_name }}</li>
+      {% endif %}
+    </ol>
+  </section>
+
+  <section class="panel">
+    <div class="section-heading">
+      <div>
+        <p class="eyebrow">Save Your Choice</p>
+        <h3>Adjust starters before saving</h3>
+      </div>
+      <p>Select the XI you actually want to track. Bench order is filled automatically from the remaining outfield players.</p>
+    </div>
+
+    <form method="post" action="/save-lineup" class="selection-form">
+      <input type="hidden" name="gameweek" value="{{ current_gameweek }}">
+      <div class="selection-list">
+        {% set chosen = manual_starters if manual_starters is defined else recommended_starters | map(attribute='player_name') | list %}
+        {% for player in ranked_players %}
+          <label class="selection-card">
+            <input type="checkbox" name="starters" value="{{ player.player_name }}" {% if player.player_name in chosen %}checked{% endif %}>
+            <div>
+              <strong>{{ player.player_name }}</strong>
+              <p>{{ player.position }} · {{ player.team_name }} · {{ player.opponent }} ({{ player.venue }})</p>
+            </div>
+            <span class="score">{{ player.overall_score }}</span>
+          </label>
+        {% endfor %}
+      </div>
+      <button type="submit" class="button">Save This Lineup</button>
+    </form>
+  </section>
+</section>
+
+<section class="panel">
+  <div class="section-heading">
+    <div>
+      <p class="eyebrow">Player Ranking</p>
+      <h3>Your squad ranked for the next match</h3>
+    </div>
+    <p>Higher scores indicate better next-match picks using recent output, expected minutes, fitness, fixture, and value.</p>
+  </div>
+
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>Player</th>
+          <th>Pos</th>
+          <th>Opponent</th>
+          <th>Score</th>
+          <th>Recent Pts</th>
+          <th>Recent Min</th>
+          <th>Chance</th>
+          <th>Why</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for player in ranked_players %}
+          <tr>
+            <td>{{ player.player_name }}</td>
+            <td>{{ player.position }}</td>
+            <td>{{ player.opponent }} ({{ player.venue }})</td>
+            <td>{{ player.overall_score }}</td>
+            <td>{{ player.recent_points }}</td>
+            <td>{{ player.recent_minutes }}</td>
+            <td>{{ player.chance_of_playing if player.chance_of_playing is not none else "N/A" }}</td>
+            <td>{{ player.explanation }}</td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+{% endif %}
+{% endblock %}

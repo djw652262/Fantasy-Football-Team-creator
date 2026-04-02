@@ -1,0 +1,113 @@
+{% extends "base.html" %}
+
+{% block title %}Squad Editor{% endblock %}
+
+{% block content %}
+<section class="panel">
+  <div class="section-heading">
+    <div>
+      <p class="eyebrow">Manual Updates</p>
+      <h2>Squad Editor</h2>
+    </div>
+    <p>Use the searchable FPL player picker for each slot. Choosing from the list stores the official player ID, which makes recommendations and score tracking much more accurate.</p>
+  </div>
+
+  {% if not player_options %}
+    <div class="empty-state">
+      <strong>Player search is waiting for cached data.</strong>
+      <p>Use the refresh button above once. After that, the squad editor will have a fast searchable player picker.</p>
+    </div>
+  {% endif %}
+
+  <form method="post" action="/squad" class="squad-form">
+    {% for entry in squad_entries %}
+      <div class="picker" data-picker>
+        <label class="field">
+          <span>Slot {{ entry.slot }}</span>
+          <input
+            type="text"
+            name="slot_{{ entry.slot }}_name"
+            value="{{ entry.player_name }}"
+            placeholder="Search by player, club, or position"
+            autocomplete="off"
+            data-picker-input
+          >
+        </label>
+        <input type="hidden" name="slot_{{ entry.slot }}" value="{{ entry.player_id or '' }}" data-picker-id>
+        <div class="picker__results" data-picker-results hidden></div>
+      </div>
+    {% endfor %}
+    <button type="submit" class="button">Save Squad</button>
+  </form>
+</section>
+
+<script id="player-options" type="application/json">{{ player_options|tojson }}</script>
+<script>
+  (() => {
+    const playerOptions = JSON.parse(document.getElementById("player-options").textContent);
+    const normalize = (value) => value.toLowerCase().trim();
+
+    document.querySelectorAll("[data-picker]").forEach((picker) => {
+      const input = picker.querySelector("[data-picker-input]");
+      const hiddenId = picker.querySelector("[data-picker-id]");
+      const results = picker.querySelector("[data-picker-results]");
+
+      const renderResults = (query) => {
+        const term = normalize(query);
+        if (!term) {
+          results.hidden = true;
+          results.innerHTML = "";
+          return;
+        }
+
+        const matches = playerOptions.filter((option) => {
+          const haystack = `${option.label} ${option.name} ${option.team} ${option.position}`.toLowerCase();
+          return haystack.includes(term);
+        }).slice(0, 8);
+
+        if (!matches.length) {
+          results.hidden = false;
+          results.innerHTML = "<div class='picker__empty'>No matching FPL players found.</div>";
+          return;
+        }
+
+        results.hidden = false;
+        results.innerHTML = matches.map((option) => (
+          `<button type="button" class="picker__option" data-id="${option.id}" data-name="${option.name}">
+            <strong>${option.name}</strong>
+            <span>${option.team} · ${option.position}</span>
+          </button>`
+        )).join("");
+      };
+
+      input.addEventListener("input", () => {
+        hiddenId.value = "";
+        renderResults(input.value);
+      });
+
+      input.addEventListener("focus", () => {
+        if (input.value.trim()) {
+          renderResults(input.value);
+        }
+      });
+
+      results.addEventListener("click", (event) => {
+        const button = event.target.closest(".picker__option");
+        if (!button) {
+          return;
+        }
+        input.value = button.dataset.name;
+        hiddenId.value = button.dataset.id;
+        results.hidden = true;
+        results.innerHTML = "";
+      });
+
+      document.addEventListener("click", (event) => {
+        if (!picker.contains(event.target)) {
+          results.hidden = true;
+        }
+      });
+    });
+  })();
+</script>
+{% endblock %}

@@ -1,0 +1,659 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Fantasy Football Team Creator</title>
+  <link rel="stylesheet" href="./styles.css">
+</head>
+<body>
+  <div class="shell">
+    <header class="topbar">
+      <div>
+        <p class="eyebrow">Fantasy Premier League Assistant</p>
+        <h1>Fantasy Football Team Creator</h1>
+      </div>
+      <nav class="nav">
+        <button type="button" data-tab="recommendations" class="is-active">Recommendations</button>
+        <button type="button" data-tab="squad">Squad Editor</button>
+        <button type="button" data-tab="history">History</button>
+      </nav>
+    </header>
+
+    <section class="status-bar">
+      <div>
+        <strong>Bundled FPL Cache</strong>
+        <span id="cache-status">Loading local cache files...</span>
+      </div>
+      <button type="button" id="refresh-reco" class="button button--ghost">Recalculate Recommendations</button>
+    </section>
+
+    <div id="flash-wrap"></div>
+
+    <main>
+      <section id="tab-recommendations">
+        <section class="hero">
+          <div>
+            <p class="eyebrow">Next Match Focus</p>
+            <h2 id="recommendations-title">Lineup recommendations</h2>
+          </div>
+          <p>Rank your squad for the next match only, then save the XI you actually choose as your decision record.</p>
+        </section>
+
+        <section id="recommendations-empty" class="panel hidden">
+          <h3>No ranked players yet</h3>
+          <p>Update your squad in Squad Editor, then click Recalculate Recommendations.</p>
+        </section>
+
+        <section id="recommendations-main" class="hidden">
+          <section id="unresolved-panel" class="panel hidden">
+            <h3>Unmatched squad names</h3>
+            <p id="unresolved-text"></p>
+          </section>
+
+          <section class="grid-two">
+            <section class="panel">
+              <div class="section-heading">
+                <div>
+                  <p class="eyebrow">Auto Pick</p>
+                  <h3>Recommended XI</h3>
+                </div>
+                <p id="formation-text"></p>
+              </div>
+              <div class="chips" id="starter-chips"></div>
+              <h4>Bench Order</h4>
+              <ol class="bench-list" id="bench-list"></ol>
+            </section>
+
+            <section class="panel">
+              <div class="section-heading">
+                <div>
+                  <p class="eyebrow">Save Your Choice</p>
+                  <h3>Adjust starters before saving</h3>
+                </div>
+                <p>Select exactly 11, with a valid FPL formation.</p>
+              </div>
+              <form id="save-lineup-form" class="selection-form">
+                <div class="selection-list" id="selection-list"></div>
+                <button type="submit" class="button">Save This Lineup</button>
+              </form>
+            </section>
+          </section>
+
+          <section class="panel">
+            <div class="section-heading">
+              <div>
+                <p class="eyebrow">Player Ranking</p>
+                <h3>Your squad ranked for the next match</h3>
+              </div>
+              <p>Higher scores indicate stronger next-match picks.</p>
+            </div>
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Player</th>
+                    <th>Pos</th>
+                    <th>Opponent</th>
+                    <th>Score</th>
+                    <th>Recent Pts</th>
+                    <th>Recent Min</th>
+                    <th>Chance</th>
+                    <th>Why</th>
+                  </tr>
+                </thead>
+                <tbody id="ranking-body"></tbody>
+              </table>
+            </div>
+          </section>
+        </section>
+      </section>
+
+      <section id="tab-squad" class="hidden">
+        <section class="panel">
+          <div class="section-heading">
+            <div>
+              <p class="eyebrow">Manual Updates</p>
+              <h2>Squad Editor</h2>
+            </div>
+            <p>Pick players from the list when possible. Free text still works for unmatched names.</p>
+          </div>
+          <form id="squad-form" class="squad-form"></form>
+          <button type="button" id="save-squad" class="button">Save Squad</button>
+          <datalist id="player-options"></datalist>
+        </section>
+      </section>
+
+      <section id="tab-history" class="hidden">
+        <section class="panel">
+          <div class="section-heading">
+            <div>
+              <p class="eyebrow">Saved Decisions</p>
+              <h2>Lineup History</h2>
+            </div>
+            <p>Saved in your browser local storage for this GitHub Pages app.</p>
+          </div>
+          <div id="history-list" class="history-list"></div>
+        </section>
+      </section>
+    </main>
+  </div>
+
+  <script>
+    const DEFAULT_SQUAD = [
+      "Lammens", "Tarkowski", "van Dijk", "Thiaw", "Mbeumo", "Fernandes", "Szoboszlai",
+      "Thiago", "Ekitike", "Joao Pedro", "Donnarumma", "Semenyo", "Gvardiol", "Gabriel", "Ouattara"
+    ].map((name, idx) => ({ slot: idx + 1, playerId: null, playerName: name }));
+
+    const STATUS_SCORE = { a: 10, d: 4, i: 0, s: 1.5, u: 5 };
+    const POSITION_MAP = { 1: "GKP", 2: "DEF", 3: "MID", 4: "FWD" };
+    const TEAM_SIZE = 15;
+
+    const state = {
+      bootstrap: null,
+      fixtures: [],
+      summaryCache: new Map(),
+      squad: [],
+      savedLineups: [],
+      rankedPlayers: [],
+      unresolvedNames: [],
+      currentGameweek: null,
+      recommended: null
+    };
+
+    function normalizeName(value) {
+      return (value || "").toLowerCase().replace(/[^a-z0-9]/g, "");
+    }
+
+    function clamp(value, lower, upper) {
+      return Math.max(lower, Math.min(upper, value));
+    }
+
+    function flash(message, isError = false) {
+      const wrap = document.getElementById("flash-wrap");
+      const node = document.createElement("div");
+      node.className = isError ? "flash flash--error" : "flash";
+      node.textContent = message;
+      wrap.innerHTML = "";
+      wrap.appendChild(node);
+      setTimeout(() => {
+        if (wrap.contains(node)) {
+          wrap.removeChild(node);
+        }
+      }, 5000);
+    }
+
+    function getNextGameweek(bootstrap) {
+      const next = bootstrap.events.find((event) => event.is_next);
+      if (next) return Number(next.id);
+      const current = bootstrap.events.find((event) => event.is_current);
+      if (current) return Number(current.id);
+      return Number(bootstrap.events[0].id);
+    }
+
+    function getNextFixture(teamId, gw, fixtures, teamsById) {
+      const match = fixtures.find((fixture) =>
+        Number(fixture.event) === gw && (Number(fixture.team_h) === teamId || Number(fixture.team_a) === teamId)
+      );
+      if (!match) return { opponent: "Unknown", venue: "TBD", difficulty: 3 };
+      const isHome = Number(match.team_h) === teamId;
+      const oppId = isHome ? Number(match.team_a) : Number(match.team_h);
+      const difficulty = Number(isHome ? match.team_h_difficulty : match.team_a_difficulty);
+      return {
+        opponent: teamsById[oppId]?.short_name || "Unknown",
+        venue: isHome ? "H" : "A",
+        difficulty
+      };
+    }
+
+    async function getElementSummary(elementId) {
+      if (state.summaryCache.has(elementId)) return state.summaryCache.get(elementId);
+      try {
+        const resp = await fetch(`./data/fpl_cache/element-summary-${elementId}.json`);
+        if (!resp.ok) {
+          state.summaryCache.set(elementId, { history: [] });
+          return { history: [] };
+        }
+        const json = await resp.json();
+        state.summaryCache.set(elementId, json);
+        return json;
+      } catch {
+        const fallback = { history: [] };
+        state.summaryCache.set(elementId, fallback);
+        return fallback;
+      }
+    }
+
+    function buildLookups(elements) {
+      const byId = new Map();
+      const byName = new Map();
+      for (const element of elements) {
+        byId.set(Number(element.id), element);
+        const names = new Set([
+          element.web_name,
+          element.first_name,
+          element.second_name,
+          `${element.first_name} ${element.second_name}`
+        ]);
+        for (const raw of names) {
+          const key = normalizeName(raw);
+          if (key && !byName.has(key)) byName.set(key, element);
+        }
+      }
+      return { byId, byName };
+    }
+
+    function scorePlayer(element, summary, fixtureInfo, teamsById) {
+      const history = (summary.history || []).slice(-3);
+      const recentPoints = history.length
+        ? history.reduce((sum, match) => sum + Number(match.total_points || 0), 0) / history.length
+        : Number(element.form || 0);
+      const recentMinutes = history.length
+        ? history.reduce((sum, match) => sum + Number(match.minutes || 0), 0) / history.length
+        : 0;
+      const chanceRaw = element.chance_of_playing_next_round;
+      const chanceOfPlaying = chanceRaw === null || chanceRaw === undefined ? null : Number(chanceRaw);
+
+      const formScore = clamp(recentPoints * 1.7, 0, 10);
+      const minutesScore = clamp((recentMinutes / 90) * 10, 0, 10);
+      const fitnessScore = clamp(
+        chanceOfPlaying !== null ? chanceOfPlaying / 10 : (STATUS_SCORE[element.status] ?? 5),
+        0,
+        10
+      );
+      const fixtureScore = clamp((6 - fixtureInfo.difficulty) * 2, 0, 10);
+      const valueScore = clamp(Number(element.points_per_game || 0) * 1.2, 0, 10);
+      const overallScore = Number((
+        formScore * 0.35 +
+        minutesScore * 0.25 +
+        fitnessScore * 0.20 +
+        fixtureScore * 0.15 +
+        valueScore * 0.05
+      ).toFixed(2));
+
+      const team = teamsById[Number(element.team)];
+      const fitnessBlurb = chanceOfPlaying !== null
+        ? `${chanceOfPlaying}% chance of playing`
+        : `status flag: ${element.status}`;
+
+      return {
+        player_name: element.web_name,
+        team_name: team?.name || "Unknown",
+        position: POSITION_MAP[Number(element.element_type)] || "UNK",
+        opponent: fixtureInfo.opponent,
+        venue: fixtureInfo.venue,
+        difficulty: fixtureInfo.difficulty,
+        status: element.status,
+        chance_of_playing: chanceOfPlaying,
+        recent_points: Number(recentPoints.toFixed(2)),
+        recent_minutes: Number(recentMinutes.toFixed(1)),
+        overall_score: overallScore,
+        explanation: `${team?.short_name || "UNK"} vs ${fixtureInfo.opponent} (${fixtureInfo.venue}), recent points ${recentPoints.toFixed(1)}, recent minutes ${recentMinutes.toFixed(0)}, ${fitnessBlurb}.`,
+        element_id: Number(element.id)
+      };
+    }
+
+    function isValidOutfield(players) {
+      const defenders = players.filter((p) => p.position === "DEF").length;
+      const midfielders = players.filter((p) => p.position === "MID").length;
+      const forwards = players.filter((p) => p.position === "FWD").length;
+      return defenders >= 3 && defenders <= 5 && midfielders >= 2 && midfielders <= 5 && forwards >= 1 && forwards <= 3 && players.length === 10;
+    }
+
+    function combinations(items, choose) {
+      const out = [];
+      function dfs(start, combo) {
+        if (combo.length === choose) {
+          out.push(combo.slice());
+          return;
+        }
+        for (let i = start; i < items.length; i += 1) {
+          combo.push(items[i]);
+          dfs(i + 1, combo);
+          combo.pop();
+        }
+      }
+      dfs(0, []);
+      return out;
+    }
+
+    function optimizeLineup(rankedPlayers) {
+      const goalkeepers = rankedPlayers.filter((player) => player.position === "GKP");
+      const outfield = rankedPlayers.filter((player) => player.position !== "GKP");
+      const starterGoalkeeper = goalkeepers.sort((a, b) => b.overall_score - a.overall_score)[0] || null;
+      const reserveGoalkeeper = goalkeepers
+        .filter((player) => starterGoalkeeper && player.player_name !== starterGoalkeeper.player_name)
+        .sort((a, b) => b.overall_score - a.overall_score)[0] || null;
+
+      let bestOutfield = [];
+      let bestScore = -Infinity;
+      for (const combo of combinations(outfield, 10)) {
+        if (!isValidOutfield(combo)) continue;
+        const score = combo.reduce((sum, player) => sum + player.overall_score, 0);
+        if (score > bestScore) {
+          bestScore = score;
+          bestOutfield = combo;
+        }
+      }
+
+      const starters = starterGoalkeeper
+        ? [starterGoalkeeper, ...bestOutfield.sort((a, b) => b.overall_score - a.overall_score)]
+        : [...bestOutfield.sort((a, b) => b.overall_score - a.overall_score)];
+
+      const starterNames = new Set(starters.map((player) => player.player_name));
+      const bench = rankedPlayers
+        .filter((player) => !starterNames.has(player.player_name))
+        .filter((player) => !reserveGoalkeeper || player.player_name !== reserveGoalkeeper.player_name)
+        .sort((a, b) => b.overall_score - a.overall_score);
+
+      const formation = {
+        DEF: starters.filter((player) => player.position === "DEF").length,
+        MID: starters.filter((player) => player.position === "MID").length,
+        FWD: starters.filter((player) => player.position === "FWD").length
+      };
+
+      return {
+        starters,
+        bench,
+        reserve_goalkeeper: reserveGoalkeeper,
+        formation: `1-${formation.DEF}-${formation.MID}-${formation.FWD}`
+      };
+    }
+
+    function validateManualSelection(starters) {
+      if (starters.length !== 11) return "Please choose exactly 11 starters.";
+      const gkCount = starters.filter((player) => player.position === "GKP").length;
+      if (gkCount !== 1) return "A valid lineup must include exactly one goalkeeper.";
+      const outfield = starters.filter((player) => player.position !== "GKP");
+      if (!isValidOutfield(outfield)) return "That lineup is not a valid FPL formation. Use at least 3 DEF, 2 MID, and 1 FWD.";
+      return null;
+    }
+
+    function saveLocalState() {
+      localStorage.setItem("fftc_squad", JSON.stringify(state.squad));
+      localStorage.setItem("fftc_saved_lineups", JSON.stringify(state.savedLineups));
+    }
+
+    function loadLocalState() {
+      try {
+        const rawSquad = JSON.parse(localStorage.getItem("fftc_squad") || "null");
+        const rawLineups = JSON.parse(localStorage.getItem("fftc_saved_lineups") || "null");
+        state.squad = Array.isArray(rawSquad) && rawSquad.length === TEAM_SIZE ? rawSquad : DEFAULT_SQUAD.slice();
+        state.savedLineups = Array.isArray(rawLineups) ? rawLineups : [];
+      } catch {
+        state.squad = DEFAULT_SQUAD.slice();
+        state.savedLineups = [];
+      }
+    }
+
+    function renderSquadEditor() {
+      const form = document.getElementById("squad-form");
+      const datalist = document.getElementById("player-options");
+      form.innerHTML = "";
+      datalist.innerHTML = "";
+
+      const elements = state.bootstrap?.elements || [];
+      const teamsById = Object.fromEntries((state.bootstrap?.teams || []).map((team) => [Number(team.id), team]));
+      const options = elements
+        .slice()
+        .sort((a, b) => {
+          const pa = Number(a.element_type) - Number(b.element_type);
+          if (pa !== 0) return pa;
+          const ta = teamsById[Number(a.team)]?.short_name || "";
+          const tb = teamsById[Number(b.team)]?.short_name || "";
+          if (ta !== tb) return ta.localeCompare(tb);
+          return String(a.web_name).localeCompare(String(b.web_name));
+        })
+        .map((element) => ({
+          id: Number(element.id),
+          name: element.web_name,
+          label: `${element.web_name} - ${teamsById[Number(element.team)]?.short_name || "UNK"} - ${POSITION_MAP[Number(element.element_type)] || "UNK"}`
+        }));
+
+      for (const option of options) {
+        const opt = document.createElement("option");
+        opt.value = option.label;
+        opt.dataset.id = String(option.id);
+        datalist.appendChild(opt);
+      }
+
+      for (const entry of state.squad) {
+        const wrap = document.createElement("label");
+        wrap.className = "field";
+        wrap.innerHTML = `
+          <span>Slot ${entry.slot}</span>
+          <input type="text" list="player-options" data-slot="${entry.slot}" value="${entry.playerId ? (options.find((o) => o.id === Number(entry.playerId))?.label || entry.playerName) : entry.playerName}" placeholder="Search by player, club, or position">
+        `;
+        form.appendChild(wrap);
+      }
+    }
+
+    function renderRecommendations() {
+      const title = document.getElementById("recommendations-title");
+      title.textContent = state.currentGameweek ? `Gameweek ${state.currentGameweek} lineup recommendations` : "Lineup recommendations";
+
+      const noData = state.rankedPlayers.length === 0;
+      document.getElementById("recommendations-empty").classList.toggle("hidden", !noData);
+      document.getElementById("recommendations-main").classList.toggle("hidden", noData);
+      if (noData) return;
+
+      const unresolvedPanel = document.getElementById("unresolved-panel");
+      const unresolvedText = document.getElementById("unresolved-text");
+      if (state.unresolvedNames.length) {
+        unresolvedText.textContent = `Could not match: ${state.unresolvedNames.join(", ")}.`;
+        unresolvedPanel.classList.remove("hidden");
+      } else {
+        unresolvedPanel.classList.add("hidden");
+      }
+
+      document.getElementById("formation-text").textContent = `Formation ${state.recommended.formation}`;
+      const starterChips = document.getElementById("starter-chips");
+      starterChips.innerHTML = "";
+      for (const player of state.recommended.starters) {
+        const chip = document.createElement("span");
+        chip.className = "chip";
+        chip.textContent = `${player.player_name} - ${player.position}`;
+        starterChips.appendChild(chip);
+      }
+
+      const benchList = document.getElementById("bench-list");
+      benchList.innerHTML = "";
+      for (const player of state.recommended.bench) {
+        const li = document.createElement("li");
+        li.textContent = `${player.player_name} (${player.position})`;
+        benchList.appendChild(li);
+      }
+      if (state.recommended.reserve_goalkeeper) {
+        const li = document.createElement("li");
+        li.textContent = `Reserve GK: ${state.recommended.reserve_goalkeeper.player_name}`;
+        benchList.appendChild(li);
+      }
+
+      const selection = document.getElementById("selection-list");
+      const defaultChosen = new Set(state.recommended.starters.map((player) => player.player_name));
+      selection.innerHTML = "";
+      for (const player of state.rankedPlayers) {
+        const item = document.createElement("label");
+        item.className = "selection-card";
+        item.innerHTML = `
+          <input type="checkbox" name="starter" value="${player.player_name}" ${defaultChosen.has(player.player_name) ? "checked" : ""}>
+          <div>
+            <strong>${player.player_name}</strong>
+            <p>${player.position} - ${player.team_name} - ${player.opponent} (${player.venue})</p>
+          </div>
+          <span class="score">${player.overall_score}</span>
+        `;
+        selection.appendChild(item);
+      }
+
+      const tbody = document.getElementById("ranking-body");
+      tbody.innerHTML = "";
+      for (const player of state.rankedPlayers) {
+        const tr = document.createElement("tr");
+        tr.innerHTML = `
+          <td>${player.player_name}</td>
+          <td>${player.position}</td>
+          <td>${player.opponent} (${player.venue})</td>
+          <td>${player.overall_score}</td>
+          <td>${player.recent_points}</td>
+          <td>${player.recent_minutes}</td>
+          <td>${player.chance_of_playing === null ? "N/A" : player.chance_of_playing}</td>
+          <td>${player.explanation}</td>
+        `;
+        tbody.appendChild(tr);
+      }
+    }
+
+    function renderHistory() {
+      const wrap = document.getElementById("history-list");
+      wrap.innerHTML = "";
+      if (!state.savedLineups.length) {
+        wrap.innerHTML = "<p>No saved lineups yet.</p>";
+        return;
+      }
+      for (const lineup of state.savedLineups.slice().reverse()) {
+        const card = document.createElement("article");
+        card.className = "history-card";
+        const rows = lineup.players
+          .map((player) => `<li>${player.player_name} - ${player.role}${player.bench_order ? ` ${player.bench_order}` : ""}</li>`)
+          .join("");
+        card.innerHTML = `
+          <div class="history-card__header">
+            <div>
+              <h3>Gameweek ${lineup.gameweek}</h3>
+              <p>Saved ${new Date(lineup.created_at).toLocaleString()}</p>
+            </div>
+            <strong>score pending</strong>
+          </div>
+          <ul class="history-players">${rows}</ul>
+        `;
+        wrap.appendChild(card);
+      }
+    }
+
+    function setTab(tab) {
+      for (const section of ["recommendations", "squad", "history"]) {
+        document.getElementById(`tab-${section}`).classList.toggle("hidden", section !== tab);
+      }
+      document.querySelectorAll("[data-tab]").forEach((button) => {
+        button.classList.toggle("is-active", button.dataset.tab === tab);
+      });
+    }
+
+    async function rankSquad() {
+      if (!state.bootstrap || !state.fixtures.length) return;
+      const teamsById = Object.fromEntries(state.bootstrap.teams.map((team) => [Number(team.id), team]));
+      const nextGameweek = getNextGameweek(state.bootstrap);
+      const lookups = buildLookups(state.bootstrap.elements);
+
+      const rankedPlayers = [];
+      const unresolved = [];
+      for (const entry of state.squad) {
+        const cleanName = String(entry.playerName || "").trim();
+        const id = entry.playerId !== null && entry.playerId !== "" ? Number(entry.playerId) : null;
+        let element = id ? lookups.byId.get(id) : null;
+        if (!element && cleanName) {
+          element = lookups.byName.get(normalizeName(cleanName));
+        }
+        if (!element) {
+          if (cleanName) unresolved.push(cleanName);
+          continue;
+        }
+        const summary = await getElementSummary(Number(element.id));
+        const fixtureInfo = getNextFixture(Number(element.team), nextGameweek, state.fixtures, teamsById);
+        rankedPlayers.push(scorePlayer(element, summary, fixtureInfo, teamsById));
+      }
+
+      rankedPlayers.sort((a, b) => b.overall_score - a.overall_score);
+      state.currentGameweek = nextGameweek;
+      state.rankedPlayers = rankedPlayers;
+      state.unresolvedNames = unresolved;
+      state.recommended = optimizeLineup(rankedPlayers);
+      renderRecommendations();
+    }
+
+    async function bootstrapApp() {
+      loadLocalState();
+      try {
+        const [bootstrapResp, fixturesResp] = await Promise.all([
+          fetch("./data/fpl_cache/bootstrap-static.json"),
+          fetch("./data/fpl_cache/fixtures.json")
+        ]);
+        if (!bootstrapResp.ok || !fixturesResp.ok) {
+          throw new Error("Missing cache files");
+        }
+        state.bootstrap = await bootstrapResp.json();
+        state.fixtures = await fixturesResp.json();
+        document.getElementById("cache-status").textContent = `Ready from repository snapshot. Loaded ${new Date().toLocaleString()}.`;
+      } catch (error) {
+        document.getElementById("cache-status").textContent = "Cache files could not be loaded. Ensure data/fpl_cache is committed.";
+        flash("Could not load bundled cache files.", true);
+      }
+
+      renderSquadEditor();
+      renderHistory();
+      await rankSquad();
+    }
+
+    document.querySelectorAll("[data-tab]").forEach((button) => {
+      button.addEventListener("click", () => setTab(button.dataset.tab));
+    });
+
+    document.getElementById("save-squad").addEventListener("click", async () => {
+      const inputs = document.querySelectorAll("#squad-form input[data-slot]");
+      const datalistValues = new Map(
+        Array.from(document.querySelectorAll("#player-options option")).map((option) => [option.value, Number(option.dataset.id)])
+      );
+      state.squad = Array.from(inputs).map((input) => ({
+        slot: Number(input.dataset.slot),
+        playerId: datalistValues.has(input.value) ? datalistValues.get(input.value) : null,
+        playerName: datalistValues.has(input.value) ? String(input.value).split(" - ")[0] : input.value.trim()
+      }));
+      saveLocalState();
+      await rankSquad();
+      flash("Squad saved.");
+    });
+
+    document.getElementById("refresh-reco").addEventListener("click", async () => {
+      await rankSquad();
+      flash("Recommendations recalculated.");
+    });
+
+    document.getElementById("save-lineup-form").addEventListener("submit", (event) => {
+      event.preventDefault();
+      const checked = Array.from(document.querySelectorAll('#selection-list input[name="starter"]:checked')).map((node) => node.value);
+      const rankedByName = new Map(state.rankedPlayers.map((player) => [player.player_name, player]));
+      const starters = checked.map((name) => rankedByName.get(name)).filter(Boolean);
+      const error = validateManualSelection(starters);
+      if (error) {
+        flash(error, true);
+        return;
+      }
+
+      const starterNames = new Set(starters.map((player) => player.player_name));
+      const remaining = state.rankedPlayers.filter((player) => !starterNames.has(player.player_name));
+      const reserveGoalkeeper = remaining.find((player) => player.position === "GKP") || null;
+      const bench = remaining
+        .filter((player) => player.position !== "GKP")
+        .sort((a, b) => b.overall_score - a.overall_score);
+
+      state.savedLineups.push({
+        gameweek: state.currentGameweek || 0,
+        created_at: new Date().toISOString(),
+        players: [
+          ...starters.map((player) => ({ player_name: player.player_name, role: "starter", bench_order: null })),
+          ...bench.map((player, idx) => ({ player_name: player.player_name, role: "bench", bench_order: idx + 1 })),
+          ...(reserveGoalkeeper ? [{ player_name: reserveGoalkeeper.player_name, role: "reserve_goalkeeper", bench_order: 4 }] : [])
+        ]
+      });
+
+      saveLocalState();
+      renderHistory();
+      flash("Lineup saved.");
+      setTab("history");
+    });
+
+    bootstrapApp();
+  </script>
+</body>
+</html>
